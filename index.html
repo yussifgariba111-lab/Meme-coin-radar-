@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meme Coin Radar</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1020;color:#f1f5f9;font-family:Arial,sans-serif;padding:20px}
+header{text-align:center;padding:25px 0}
+h1{color:#43e6a5;margin-bottom:8px}
+p{color:#9caac0;line-height:1.5}
+main{max-width:650px;margin:auto}
+.search{display:flex;gap:8px;margin:22px 0}
+input{min-width:0;flex:1;padding:14px;border-radius:10px;border:1px solid #334155;background:#151e30;color:white}
+button{padding:14px;border:0;border-radius:10px;background:#43e6a5;color:#07130e;font-weight:bold}
+.card{background:#151e30;border:1px solid #263349;border-radius:14px;padding:18px;margin:15px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{background:#0b1020;padding:12px;border-radius:9px;overflow-wrap:anywhere}
+.label{font-size:12px;color:#9caac0}
+.value{font-size:17px;font-weight:bold;margin-top:7px}
+a{color:#43e6a5}
+#status{white-space:pre-wrap}
+footer{font-size:12px;color:#9caac0;text-align:center;margin:30px 0}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>🛰️ Meme Coin Radar</h1>
+<p>Explore Solana tokens. Check market data and potential warning signs.</p>
+</header>
+
+<div class="search">
+<input id="address" placeholder="Paste Solana token address">
+<button onclick="scan()">Scan</button>
+</div>
+
+<p id="status">Enter a token address to begin.</p>
+<section id="results"></section>
+
+<footer>
+Educational research tool. Data may be incomplete or delayed.
+Risk flags are not guarantees of safety. Always do your own research.
+</footer>
+</main>
+
+<script>
+const fmt = n => {
+  if(n === null || n === undefined || !Number.isFinite(Number(n))) return "N/A";
+  return Number(n).toLocaleString("en-US", {maximumFractionDigits:2});
+};
+const money = n => n == null ? "N/A" :
+  "$" + fmt(n);
+
+async function scan(){
+  const address = document.getElementById("address").value.trim();
+  const status = document.getElementById("status");
+  const results = document.getElementById("results");
+
+  results.innerHTML = "";
+
+  if(!address){
+    status.textContent = "Please enter a token address.";
+    return;
+  }
+
+  status.textContent = "Scanning token data…";
+
+  try {
+    const response = await fetch(
+      "https://api.dexscreener.com/latest/dex/tokens/" +
+      encodeURIComponent(address)
+    );
+
+    if(!response.ok) throw new Error("Market data is temporarily unavailable.");
+
+    const data = await response.json();
+    const pairs = (data.pairs || [])
+      .filter(p => p.chainId === "solana")
+      .sort((a,b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+
+    if(!pairs.length){
+      status.textContent = "No Solana trading pairs found. Check the address and try again.";
+      return;
+    }
+
+    const p = pairs[0];
+    const liquidity = p.liquidity?.usd;
+    const volume = p.volume?.h24;
+    const mc = p.marketCap ?? p.fdv;
+    const change = p.priceChange?.h24;
+    const flags = [];
+
+    if(liquidity == null) flags.push("Liquidity data unavailable");
+    else if(liquidity < 5000) flags.push("Very low liquidity");
+
+    if(volume == null) flags.push("24-hour volume unavailable");
+    else if(volume < 1000) flags.push("Very low 24-hour volume");
+
+    if(p.pairCreatedAt &&
+       Date.now() - p.pairCreatedAt < 86400000)
+      flags.push("Token pair is less than 24 hours old");
+
+    status.textContent = "Scan complete. Review the data and warning signs below.";
+
+    results.innerHTML = `
+      <div class="card">
+        <h2>${escapeHTML(p.baseToken?.name || "Unknown Token")}
+          (${escapeHTML(p.baseToken?.symbol || "N/A")})</h2>
+        <p>DEX: ${escapeHTML(p.dexId || "N/A")}</p>
+        <div class="grid">
+          <div class="metric"><div class="label">Price</div><div class="value">${money(Number(p.priceUsd))}</div></div>
+          <div class="metric"><div class="label">Market cap / FDV</div><div class="value">${money(mc)}</div></div>
+          <div class="metric"><div class="label">Liquidity</div><div class="value">${money(liquidity)}</div></div>
+          <div class="metric"><div class="label">24h volume</div><div class="value">${money(volume)}</div></div>
+          <div class="metric"><div class="label">24h price change</div><div class="value">${change == null ? "N/A" : fmt(change) + "%"}</div></div>
+          <div class="metric"><div class="label">Pair age</div><div class="value">${age(p.pairCreatedAt)}</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>⚠️ Preliminary warning signs</h3>
+        <p>${flags.length ? flags.map(escapeHTML).join("<br>") : "No basic warning flags triggered. This does NOT mean the token is safe."}</p>
+        <p>These checks are limited. They do not verify ownership, mint authority, freeze authority, holder concentration or honeypot risk.</p>
+        <p><a href="${safeLink(p.url)}" target="_blank" rel="noopener">View on DexScreener ↗</a></p>
+        <p><a href="https://solscan.io/token/${encodeURIComponent(address)}" target="_blank" rel="noopener">View token on Solscan ↗</a></p>
+      </div>`;
+  } catch(e) {
+    status.textContent = "Could not load token data. Check your internet connection and try again.";
+  }
+}
+
+function age(date){
+  if(!date) return "Unknown";
+  const hours = Math.floor((Date.now()-date)/3600000);
+  if(hours < 24) return hours + " hours";
+  return Math.floor(hours/24) + " days";
+}
+
+function escapeHTML(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function safeLink(url){
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && u.hostname === "dexscreener.com"
+      ? u.href : "https://dexscreener.com";
+  } catch {
+    return "https://dexscreener.com";
+  }
+}
+</script>
+</body>
+  </html>
